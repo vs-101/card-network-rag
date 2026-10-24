@@ -10,6 +10,8 @@ from chromadb.utils import embedding_functions
 from pypdf import PdfReader
 from tqdm import tqdm
 
+from rag import classify_sensitivity
+
 CHROMA_DIR = str(Path(__file__).parent / "chroma_db")
 COLLECTION_NAME = "card_network_docs"
 CHUNK_SIZE = 1200
@@ -43,6 +45,7 @@ def build_chunks(pdf_path: Path):
             metadatas.append({
                 "source": pdf_path.name,
                 "page": page_num,
+                "sensitivity": classify_sensitivity(chunk),
             })
             ids.append(f"{pdf_path.stem}_p{page_num}_c{i}")
     return chunks, metadatas, ids

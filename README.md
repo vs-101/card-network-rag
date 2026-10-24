@@ -1,10 +1,16 @@
-# Card Network RAG Chatbot
+# Mastercard Spec Advisor
 
-A Retrieval-Augmented Generation (RAG) CLI chatbot that answers questions about
+A Retrieval-Augmented Generation (RAG) chatbot that answers questions about
 card network rules, grounded in the **Mastercard Authorization System Guide**
-(a 2,070-page reference PDF). Built as a small, self-contained demo of a
-production-style RAG pattern: local/free retrieval + paid generation only
-where it adds value.
+(a 2,070-page reference PDF). Available both as a polished web UI (with
+login and role-based content restriction) and a CLI. Built as a small,
+self-contained demo of a production-style RAG pattern: local/free retrieval
++ paid generation only where it adds value, plus a realistic access-control
+layer.
+
+> **Disclaimer:** This is an independent demo project, not affiliated with,
+> endorsed by, or sponsored by Mastercard. "Mastercard" references are to
+> the public specification document used as the knowledge base.
 
 ## Why this architecture
 
@@ -19,48 +25,85 @@ keeping cost at (near) zero during development:
 | Generation | Claude API, `claude-haiku-4-5` | Only the final answer-generation step costs money; Haiku keeps per-query cost low while still producing grounded, well-cited answers |
 | Prompt caching | `cache_control: ephemeral` on the system prompt | The system prompt (instructions, role) is static across every query — caching it cuts cost/latency on repeated calls. The retrieved context and question change every time, so they're deliberately left uncached |
 | Citations | Chroma metadata (`source`, `page`) attached per chunk at ingest time | Lets the model cite `(source, page X)` instead of answering from parametric memory, and lets a user verify any claim against the source PDF |
+| Access control | Keyword-based `sensitivity` tag (`general`/`restricted`) per chunk, enforced via a Chroma `where` filter at query time | Demonstrates RBAC-aware retrieval without needing a second document — security-sensitive sections (PIN handling, key management, data-compromise procedures) are filtered out before they ever reach the LLM prompt for lower-privilege roles |
 
 This mirrors a real-world cost-conscious RAG design: free/local wherever
 retrieval and storage are concerned, paid API only at the point where it's
-actually earning its cost (natural-language generation).
+actually earning its cost (natural-language generation) — with access
+control enforced at the retrieval layer, not left to the LLM to self-censor.
 
 ## Architecture
 
+```mermaid
+flowchart TD
+    PDF["📄 PDF<br/>Mastercard Authorization Guide<br/>(2,070 pages)"]
+
+    subgraph ingest["ingest.py — one-time / re-runnable"]
+        direction TB
+        A1["pypdf: extract text per page"]
+        A2["chunk into 1,200-char windows<br/>(200 char overlap)"]
+        A3["sentence-transformers<br/>all-MiniLM-L6-v2 (local, free)"]
+        A4["classify_sensitivity()<br/>tag general | restricted"]
+        A1 --> A2 --> A3 --> A4
+    end
+
+    PDF --> ingest
+
+    DB[("🗄️ chroma_db/<br/>persistent local vector store<br/>4,706 chunks")]
+    ingest -- "upsert {source, page, sensitivity}" --> DB
+
+    subgraph core["rag.py — shared retrieval + generation"]
+        direction TB
+        B1["embed user question<br/>(same local model)"]
+        B2["Chroma similarity search<br/>top-5 chunks + metadata"]
+        B3{"role allows<br/>restricted?"}
+        B4["where = sensitivity: general<br/>(filtered for lower-privilege roles)"]
+        B5["build prompt:<br/>cached system instructions +<br/>uncached context/question"]
+        B6["Claude API<br/>claude-haiku-4-5"]
+        B1 --> B2 --> B3
+        B3 -- "no" --> B4 --> B5
+        B3 -- "yes" --> B5
+        B5 --> B6
+    end
+
+    DB --> core
+
+    CLI["💻 chat.py<br/>CLI — no login, full access"]
+    WEB["🌐 app.py<br/>Streamlit UI — login + role-based access"]
+    core --> CLI
+    core --> WEB
+
+    AUTH["🔐 auth.py<br/>general_user / compliance_officer"]
+    AUTH --> WEB
+
+    ANSWER["✅ Grounded answer with<br/>(source, page) citations"]
+    CLI --> ANSWER
+    WEB --> ANSWER
 ```
-PDF (Mastercard Authorization Guide)
-        │
-        ▼
-   ingest.py
-   ├─ pypdf: extract text per page
-   ├─ chunk into 1,200-char windows (200 overlap)
-   ├─ sentence-transformers: embed locally (free)
-   └─ upsert into Chroma, tagged with {source, page}
-        │
-        ▼
-   chroma_db/  (persistent local vector store, 4,706 chunks)
-        │
-        ▼
-   chat.py
-   ├─ embed the user's question (same local model)
-   ├─ Chroma similarity search → top-5 chunks + metadata
-   ├─ build prompt: cached system instructions + uncached context/question
-   ├─ Claude API (claude-haiku-4-5) → grounded answer with citations
-   └─ print to CLI
-```
+
+> Rendered automatically by GitHub on this page. If you're viewing this
+> elsewhere and it shows as a code block instead of a diagram, open this
+> file on github.com/vs-101/card-network-rag or in any Mermaid-compatible
+> markdown viewer.
 
 ## Project structure
 
 ```
 card-network-rag/
-├── ingest.py           # One-time (or re-run-able) PDF → Chroma ingestion
-├── chat.py             # Interactive CLI chatbot
-├── requirements.txt    # Pinned dependencies
-├── .env                # ANTHROPIC_API_KEY (gitignored, never commit)
-├── .env.example         # Template for the above
+├── rag.py               # Shared: embeddings, Chroma access, sensitivity classifier, retrieval, generation
+├── ingest.py             # PDF → chunk → embed → Chroma, tags sensitivity at ingest time
+├── tag_sensitivity.py    # One-off migration: backfill sensitivity tags on already-ingested chunks
+├── auth.py               # Demo login (2 roles): general_user, compliance_officer
+├── app.py                # Streamlit web UI: login + role-filtered chat, custom styling
+├── chat.py               # CLI chatbot (full access, no login)
+├── .streamlit/config.toml # Theme (colors, font)
+├── requirements.txt      # Pinned dependencies
+├── .env                  # ANTHROPIC_API_KEY (gitignored, never commit)
+├── .env.example          # Template for the above
 ├── .gitignore
-├── chroma_db/           # Persistent vector store (gitignored)
-├── data/                # (unused placeholder for future source docs)
-└── venv/                # Python virtual environment (gitignored)
+├── chroma_db/             # Persistent vector store (gitignored)
+├── data/                  # (unused placeholder for future source docs)
+└── venv/                  # Python virtual environment (gitignored)
 ```
 
 ## Setup
@@ -93,11 +136,53 @@ python ingest.py "/path/to/directory/"        # all PDFs in a directory
 
 This is idempotent — chunk IDs are deterministic (`{filename}_p{page}_c{chunk}`),
 so re-running `ingest.py` on the same file upserts rather than duplicates.
+Each chunk is automatically tagged `sensitivity: general|restricted` based on
+keyword classification (see `RESTRICTED_KEYWORDS` in `rag.py`).
 
 Currently ingested: `m_DMAS_en-us-2026-08-25.pdf` (Mastercard Authorization
-System Guide), 2,070 pages → 4,706 chunks.
+System Guide), 2,070 pages → 4,706 chunks (380 tagged `restricted`, 4,326
+tagged `general`).
 
-## Running the chatbot
+If you have an existing collection that predates the sensitivity feature,
+backfill it without re-embedding:
+
+```bash
+python tag_sensitivity.py
+```
+
+## Running the web UI (recommended — login + role-based access demo)
+
+```bash
+source venv/bin/activate
+streamlit run app.py
+```
+
+Opens at `http://localhost:8501` with a custom theme (`.streamlit/config.toml`)
+and styling (card-style login, role badges, branded header) — see `app.py`'s
+`CUSTOM_CSS` block to tweak colors/fonts. Two demo accounts are seeded in
+`auth.py`:
+
+| Role | Username | Password | Access |
+|---|---|---|---|
+| General User | `analyst` | `analyst123` | `general` content only |
+| Compliance Officer | `compliance` | `compliance123` | `general` + `restricted` (security-sensitive) content |
+
+Try asking **"How is a PIN verified during an authorization request?"** as
+each user:
+- As `analyst`, you get an answer plus a notice that N additional relevant
+  sections exist in restricted content, hidden at your access level.
+- As `compliance`, you get the full answer, including the PIN/key-management
+  material the general user couldn't see.
+
+This demonstrates enforcement at the **retrieval layer** — restricted chunks
+are filtered out via a Chroma `where` clause before they're ever included in
+the prompt sent to Claude, not just asked to be "ignored" by the model.
+
+> Demo auth only: credentials are hardcoded with unsalted SHA-256 hashing in
+> `auth.py` for simplicity. Swap for a real identity provider (OAuth/SSO) and
+> salted hashes (bcrypt/argon2) before using this pattern anywhere real.
+
+## Running the CLI (no login, full access)
 
 ```bash
 source venv/bin/activate
@@ -116,23 +201,13 @@ An authorization request is a message used in card transactions.
 Specifically, the context mentions the "Authorization Request/0100 message"
 as an acquirer-generated message used in the Mastercard Dual Message
 Authorization System (source, page 1795).
-
-The context provides an example of an e-commerce authorization request
-process where:
-- A merchant requests authorization from the acquirer after receiving
-  cardholder purchase information
-- The acquirer then generates an Authorization Request/0100 message that
-  includes cardholder payment data and appropriate data element values
-  (source, page 1545)
-
-However, the provided context does not contain a comprehensive definition...
+...
 ```
 
 Note the model also correctly declines to over-answer when the retrieved
 context is thin — e.g. asked "What is a chargeback?" (a topic the
-Authorization guide only mentions in passing, not the right source document
-for), it says so explicitly rather than inventing an answer. That's the RAG
-grounding working as intended, not a bug.
+Authorization guide only mentions in passing), it says so explicitly rather
+than inventing an answer. That's the RAG grounding working as intended.
 
 ## Design notes / talking points
 
@@ -143,13 +218,21 @@ grounding working as intended, not a bug.
 - **Citations by construction**: page numbers are captured once, at ingest
   time, as metadata — not inferred by the LLM — so citations are always
   accurate to the source document.
+- **Access control enforced before generation, not after**: restricted
+  chunks are excluded from the Chroma query results for lower-privilege
+  roles — the LLM never sees them, so there's no reliance on the model
+  "choosing" not to leak sensitive content.
+- **Transparent restriction**: the UI tells a general user when relevant
+  but restricted content was withheld (count only, not content) — a useful
+  pattern for demonstrating RBAC without silently failing or confusing users.
 - **Cost control**: embeddings and vector search are fully local/free; the
   only metered cost is the final Haiku completion per query, with prompt
   caching reducing that further on repeated system-prompt reuse.
 - **Scaling path**: swapping `chromadb` for a hosted vector DB (e.g.
   Pinecone/Weaviate) or moving the embedding step to an API-based model are
   both drop-in replacements — the retrieval/generation contract (`query()` →
-  chunks → prompt) doesn't change.
+  chunks → prompt) doesn't change. Same for swapping the keyword-based
+  sensitivity classifier for a proper per-document ACL or a classifier model.
 
 ## Future improvements
 
@@ -157,5 +240,6 @@ grounding working as intended, not a bug.
   this a true cross-network knowledge base.
 - Re-ranking retrieved chunks before generation for higher precision.
 - Conversation memory across turns (currently each question is independent).
-- Swap the CLI for a lightweight web UI (Streamlit/FastAPI) once ready to
-  demo beyond the terminal.
+- Real identity provider (OAuth/SSO) instead of the hardcoded demo accounts.
+- More granular roles (e.g. per-data-element access) instead of a binary
+  general/restricted split.
