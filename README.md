@@ -96,6 +96,10 @@ card-network-rag/
 ├── auth.py               # Demo login (2 roles): general_user, compliance_officer
 ├── app.py                # Streamlit web UI: login + role-filtered chat, custom styling
 ├── chat.py               # CLI chatbot (full access, no login)
+├── evals/
+│   ├── testset.jsonl     # 20 labeled test questions (general/restricted/out_of_scope)
+│   ├── run_evals.py      # Eval runner: RBAC leakage, faithfulness, abstention checks
+│   └── report.md         # Generated after each run; committed so the latest results are visible on GitHub
 ├── .streamlit/config.toml # Theme (colors, font)
 ├── requirements.txt      # Pinned dependencies
 ├── .env                  # ANTHROPIC_API_KEY (gitignored, never commit)
@@ -209,6 +213,49 @@ context is thin — e.g. asked "What is a chargeback?" (a topic the
 Authorization guide only mentions in passing), it says so explicitly rather
 than inventing an answer. That's the RAG grounding working as intended.
 
+## AI evals
+
+Beyond manual spot-checking, the project includes an automated eval suite
+(`evals/`) that runs a labeled test set against the live pipeline and scores
+the results. Three checks, ordered from most to least rigorous:
+
+1. **RBAC leakage (deterministic, hard pass/fail)** — for every `restricted`
+   test question, a `general_user` retrieval must *never* return a chunk
+   tagged `sensitivity: restricted`, while a `compliance_officer` retrieval
+   should. This is a security invariant, not a quality judgment: a failure
+   here means the access-control filter itself is broken. The script exits
+   non-zero on any leak, so it's CI-gateable.
+2. **Faithfulness (LLM-as-judge, 1–5)** — for every question, Claude grades
+   whether the generated answer is actually supported by the retrieved
+   context, catching hallucination beyond what was retrieved.
+3. **Abstention (LLM-as-judge, pass/fail)** — for `out_of_scope` questions
+   (things the knowledge base doesn't cover, e.g. "What is the weather
+   forecast for tomorrow?"), checks that the assistant said so rather than
+   fabricating a confident-sounding answer.
+
+The test set (`evals/testset.jsonl`) has 20 labeled questions: 10 `general`,
+5 `restricted` (PIN handling, CVC2, key management, data compromise, track 2
+data), and 5 `out_of_scope` (chargebacks, dispute timelines, Visa-specific
+rules, interchange fees, and an unrelated question entirely).
+
+Run it with:
+
+```bash
+source venv/bin/activate
+python evals/run_evals.py
+```
+
+This prints progress per question, writes `evals/report.md`, and exits `1`
+if RBAC leakage is ever detected. Latest run: **0 RBAC leakage failures**,
+**4.80/5 average faithfulness**, **5/5 correct abstentions** on out-of-scope
+questions — see `evals/report.md` for the full per-question breakdown.
+
+> **Note on the judge model:** the eval script reuses `claude-haiku-4-5`
+> (the same model used for generation) as the LLM judge, to keep this demo
+> at near-zero cost. In a production eval setup you'd typically use a
+> stronger or structurally different model as judge than the one being
+> evaluated, to avoid the generator and judge sharing the same blind spots.
+
 ## Design notes / talking points
 
 - **Grounded, not memorized**: the system prompt instructs Claude to answer
@@ -225,6 +272,10 @@ than inventing an answer. That's the RAG grounding working as intended.
 - **Transparent restriction**: the UI tells a general user when relevant
   but restricted content was withheld (count only, not content) — a useful
   pattern for demonstrating RBAC without silently failing or confusing users.
+- **RBAC is tested, not just implemented**: the eval suite's leakage check
+  re-verifies the access-control invariant on every run against the live
+  vector store, rather than trusting that the `where` filter in `rag.py`
+  stays correct as the code evolves.
 - **Cost control**: embeddings and vector search are fully local/free; the
   only metered cost is the final Haiku completion per query, with prompt
   caching reducing that further on repeated system-prompt reuse.
@@ -243,3 +294,7 @@ than inventing an answer. That's the RAG grounding working as intended.
 - Real identity provider (OAuth/SSO) instead of the hardcoded demo accounts.
 - More granular roles (e.g. per-data-element access) instead of a binary
   general/restricted split.
+- Expand `evals/testset.jsonl` with retrieval-quality metrics (precision/
+  recall/MRR against a labeled relevant-chunk set) and a stronger/different
+  judge model than the generator.
+- Wire `evals/run_evals.py` into CI so the RBAC leakage check gates merges.

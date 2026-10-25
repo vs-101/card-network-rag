@@ -1,0 +1,20 @@
+{"id": "g1", "category": "general", "question": "What is an authorization request message?"}
+{"id": "g2", "category": "general", "question": "What is the purpose of an authorization response message?"}
+{"id": "g3", "category": "general", "question": "What is Stand-In Processing (STIP)?"}
+{"id": "g4", "category": "general", "question": "What data elements are typically included in an authorization request?"}
+{"id": "g5", "category": "general", "question": "What is a Dual Message System?"}
+{"id": "g6", "category": "general", "question": "How does an acquirer submit an authorization request on behalf of a merchant?"}
+{"id": "g7", "category": "general", "question": "What is the role of the issuer in the authorization process?"}
+{"id": "g8", "category": "general", "question": "What happens when an authorization request times out?"}
+{"id": "g9", "category": "general", "question": "What is a partial approval in the context of authorization?"}
+{"id": "g10", "category": "general", "question": "What is an authorization response code?"}
+{"id": "r1", "category": "restricted", "question": "How is a PIN verified during an authorization request?"}
+{"id": "r2", "category": "restricted", "question": "What are the requirements for CVC2 validation?"}
+{"id": "r3", "category": "restricted", "question": "How should cryptographic keys be managed for PIN encryption?"}
+{"id": "r4", "category": "restricted", "question": "What steps are required when there is an account data compromise or forensic investigation?"}
+{"id": "r5", "category": "restricted", "question": "What is required to protect track 2 data during transmission?"}
+{"id": "o1", "category": "out_of_scope", "question": "What is a chargeback?"}
+{"id": "o2", "category": "out_of_scope", "question": "What is the dispute resolution timeline for a cardholder complaint?"}
+{"id": "o3", "category": "out_of_scope", "question": "What are Visa's authorization message format requirements?"}
+{"id": "o4", "category": "out_of_scope", "question": "What is the current interchange fee for a card-not-present transaction?"}
+{"id": "o5", "category": "out_of_scope", "question": "What is the weather forecast for tomorrow?"}
